@@ -6,6 +6,7 @@ body {
 	text-align: center;
 	background-color: #000000;
 	color: #f5f5f5;
+	cursor: crosshair;
 }
 a {
 	color: #6fb3f2;
@@ -83,13 +84,12 @@ a:focus {
 .profile-image {
 	border: 1px solid #f5f5f5;
 }
-#floating-head {
+.floating-head {
 	position: fixed;
 	top: 0;
 	left: 0;
-	width: 100px;
-	height: 100px;
-	pointer-events: none;
+	pointer-events: auto;
+	cursor: crosshair;
 	z-index: 9999;
 	will-change: transform;
 }
