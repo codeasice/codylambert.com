@@ -1,8 +1,11 @@
 html {
 	font-size: 20px;
+	background-color: #ffffff;
 }
 body {
 	text-align: center;
+	background-color: #ffffff;
+	color: #333333;
 }
 
 #knoxdevs-tagline { 
