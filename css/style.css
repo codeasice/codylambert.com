@@ -11,6 +11,7 @@ body {
 }
 a {
 	color: #6fb3f2;
+	cursor: crosshair;
 }
 a:hover,
 a:focus {
@@ -27,11 +28,24 @@ a:focus {
 	padding-top: 30px;
 }
 
+/* Let clicks pass through empty/transparent gaps in the layout wrappers
+   straight to whatever is behind them (e.g. a floating head); only the
+   actual visible content should be able to block a click. */
+.container {
+	pointer-events: none;
+}
+.container h1,
+.container h3,
+.container img,
+.container a {
+	pointer-events: auto;
+}
+
 /* Wrapper */
 .icon-button {
 	background-color: #ccc;
 	border-radius: 1.8rem;
-	cursor: pointer;
+	cursor: crosshair;
 	display: inline-block;
 	font-size: 1.0rem;
 	line-height: 1.8rem;
