@@ -70,6 +70,48 @@
 		};
 	}
 
+	// --- Shared AABB helpers, used for every moving-object-vs-moving-object
+	// pairing (heads, dislodgeables) so everything can bounce off everything,
+	// not just off the static bricks. ---------------------------------------
+
+	function objW(o) { return o.size !== undefined ? o.size : o.width; }
+	function objH(o) { return o.size !== undefined ? o.size : o.height; }
+
+	function aabbOverlap(a, b) {
+		var overlapX = Math.min(a.x + objW(a), b.x + objW(b)) - Math.max(a.x, b.x);
+		var overlapY = Math.min(a.y + objH(a), b.y + objH(b)) - Math.max(a.y, b.y);
+		if (overlapX <= 0 || overlapY <= 0) return null;
+		return { x: overlapX, y: overlapY };
+	}
+
+	// Pushes both objects apart along whichever axis has the smaller overlap,
+	// then swaps their velocity on that axis (the standard equal-mass
+	// elastic-collision trick). A plain "reflect using your own velocity"
+	// works for two moving objects but leaves a stationary one dead in the
+	// water (Math.abs(0) is still 0) - swapping correctly transfers
+	// momentum into it either way.
+	function resolveMutualCollision(a, b) {
+		var ov = aabbOverlap(a, b);
+		if (!ov) return false;
+
+		if (ov.x < ov.y) {
+			var pushX = ov.x / 2;
+			if (a.x < b.x) { a.x -= pushX; b.x += pushX; }
+			else { a.x += pushX; b.x -= pushX; }
+			var avx = a.vx;
+			a.vx = b.vx;
+			b.vx = avx;
+		} else {
+			var pushY = ov.y / 2;
+			if (a.y < b.y) { a.y -= pushY; b.y += pushY; }
+			else { a.y += pushY; b.y -= pushY; }
+			var avy = a.vy;
+			a.vy = b.vy;
+			b.vy = avy;
+		}
+		return true;
+	}
+
 	// --- Brick frame -------------------------------------------------------
 
 	function layoutRun(start, end, unit) {
@@ -366,7 +408,7 @@
 		}
 	}
 
-	function updateDislodgeables(delta, screenW, screenH) {
+	function moveDislodgeables(delta, screenW, screenH) {
 		for (var i = 0; i < dislodgeables.length; i++) {
 			var obj = dislodgeables[i];
 			if (obj.state === 'resting') continue;
@@ -382,8 +424,6 @@
 				else if (obj.x > screenW) obj.x = -obj.width;
 				if (obj.y + obj.height < 0) obj.y = screenH;
 				else if (obj.y > screenH) obj.y = -obj.height;
-
-				obj.el.style.transform = 'translate(' + obj.x + 'px, ' + obj.y + 'px) rotate(' + obj.rotation + 'deg)';
 			} else if (obj.state === 'returning') {
 				var dx = obj.homeX - obj.x;
 				var dy = obj.homeY - obj.y;
@@ -396,9 +436,42 @@
 					obj.x += (dx / dist) * step;
 					obj.y += (dy / dist) * step;
 					obj.rotation += obj.rotationSpeed * delta * 0.3;
-					obj.el.style.transform = 'translate(' + obj.x + 'px, ' + obj.y + 'px) rotate(' + obj.rotation + 'deg)';
 				}
 			}
+		}
+	}
+
+	// Heads bouncing off already-dislodged content, and dislodged content
+	// bouncing off other dislodged content. Resting content is handled by
+	// checkDislodgeCollisions (it triggers a dislodge instead of a plain
+	// bounce); returning content glides home and ignores collisions so a
+	// shot reliably sends it all the way back.
+	function checkMutualBounces() {
+		for (var i = 0; i < heads.length; i++) {
+			var head = heads[i];
+			for (var j = 0; j < dislodgeables.length; j++) {
+				var obj = dislodgeables[j];
+				if (obj.state !== 'dislodged') continue;
+				resolveMutualCollision(head, obj);
+			}
+		}
+
+		for (var a = 0; a < dislodgeables.length; a++) {
+			var objA = dislodgeables[a];
+			if (objA.state !== 'dislodged') continue;
+			for (var b = a + 1; b < dislodgeables.length; b++) {
+				var objB = dislodgeables[b];
+				if (objB.state !== 'dislodged') continue;
+				resolveMutualCollision(objA, objB);
+			}
+		}
+	}
+
+	function renderDislodgeables() {
+		for (var i = 0; i < dislodgeables.length; i++) {
+			var obj = dislodgeables[i];
+			if (obj.state === 'resting') continue;
+			obj.el.style.transform = 'translate(' + obj.x + 'px, ' + obj.y + 'px) rotate(' + obj.rotation + 'deg)';
 		}
 	}
 
@@ -480,31 +553,30 @@
 		spawnHead(newSize, cx - newSize / 2, cy - newSize / 2, vx, vy);
 	}
 
-	function checkMerges() {
+	// Two heads that touch either merge (if both are past their cooldown) or
+	// simply bounce off each other, same as everything else.
+	function checkHeadCollisions() {
 		var pairs = [];
 		var consumed = {};
 
 		for (var i = 0; i < heads.length; i++) {
 			if (consumed[i]) continue;
 			var a = heads[i];
-			if (a.age < MERGE_COOLDOWN) continue;
 
 			for (var j = i + 1; j < heads.length; j++) {
 				if (consumed[j]) continue;
 				var b = heads[j];
-				if (b.age < MERGE_COOLDOWN) continue;
 
-				var ax = a.x + a.size / 2, ay = a.y + a.size / 2;
-				var bx = b.x + b.size / 2, by = b.y + b.size / 2;
-				var dx = ax - bx, dy = ay - by;
-				var dist = Math.sqrt(dx * dx + dy * dy);
+				if (!aabbOverlap(a, b)) continue;
 
-				if (dist < (a.size + b.size) / 2) {
+				if (a.age >= MERGE_COOLDOWN && b.age >= MERGE_COOLDOWN) {
 					consumed[i] = true;
 					consumed[j] = true;
 					pairs.push([a, b]);
 					break;
 				}
+
+				resolveMutualCollision(a, b);
 			}
 		}
 
@@ -521,6 +593,9 @@
 		var screenW = window.innerWidth;
 		var screenH = window.innerHeight;
 
+		// 1. Move everything and resolve collisions against the static bricks
+		// and, for heads, against resting dislodgeables (which may knock one
+		// loose).
 		for (var i = 0; i < heads.length; i++) {
 			var head = heads[i];
 
@@ -538,12 +613,22 @@
 
 			if (head.y + head.size < 0) head.y = screenH;
 			else if (head.y > screenH) head.y = -head.size;
-
-			head.el.style.transform = 'translate(' + head.x + 'px, ' + head.y + 'px) rotate(' + head.rotation + 'deg)';
 		}
 
-		updateDislodgeables(delta, screenW, screenH);
-		checkMerges();
+		moveDislodgeables(delta, screenW, screenH);
+
+		// 2. Now that everything has moved, resolve every remaining pairing:
+		// head-vs-head (bounce or merge), head-vs-dislodged, and
+		// dislodged-vs-dislodged - so everything bounces off everything.
+		checkMutualBounces();
+		checkHeadCollisions();
+
+		// 3. Render final positions.
+		for (var k = 0; k < heads.length; k++) {
+			var h = heads[k];
+			h.el.style.transform = 'translate(' + h.x + 'px, ' + h.y + 'px) rotate(' + h.rotation + 'deg)';
+		}
+		renderDislodgeables();
 
 		requestAnimationFrame(frame);
 	}
@@ -588,13 +673,12 @@
 			var obj = dislodgeables[j];
 			if (obj.state !== 'dislodged') continue;
 
-			var ocx = obj.x + obj.width / 2;
-			var ocy = obj.y + obj.height / 2;
-			var odx = x - ocx, ody = y - ocy;
-			var odist = Math.sqrt(odx * odx + ody * ody);
-			var radius = (obj.width + obj.height) / 4;
-
-			if (odist < radius + HIT_TOLERANCE) {
+			// A full rectangle test (plus the usual tolerance margin) instead
+			// of an averaged circle, so a long text line or the photo is
+			// hittable anywhere across its actual width/height, not just near
+			// its center.
+			if (x >= obj.x - HIT_TOLERANCE && x <= obj.x + obj.width + HIT_TOLERANCE &&
+				y >= obj.y - HIT_TOLERANCE && y <= obj.y + obj.height + HIT_TOLERANCE) {
 				hitAny = true;
 				returnHome(obj);
 			}
