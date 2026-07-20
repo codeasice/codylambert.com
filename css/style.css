@@ -149,6 +149,42 @@ a:focus {
 .my-title {
 }
 
+/* Vintage arcade brick wall framing the content */
+.brick {
+	position: fixed;
+	top: 0;
+	left: 0;
+	box-sizing: border-box;
+	border: 1px solid rgba(0, 0, 0, 0.55);
+	box-shadow:
+		inset 2px 2px 0 rgba(255, 255, 255, 0.35),
+		inset -2px -2px 0 rgba(0, 0, 0, 0.35);
+	cursor: var(--reticle-cursor);
+	pointer-events: auto;
+	z-index: 5;
+}
+
+.brick-fragment {
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 6px;
+	height: 6px;
+	pointer-events: none;
+	z-index: 6;
+	animation: brick-fragment-anim 0.5s ease-out forwards;
+}
+@keyframes brick-fragment-anim {
+	0% {
+		transform: translate(0, 0) rotate(0deg);
+		opacity: 1;
+	}
+	100% {
+		transform: translate(var(--dx), var(--dy)) rotate(var(--rot));
+		opacity: 0;
+	}
+}
+
 
 
 /* Icons */
