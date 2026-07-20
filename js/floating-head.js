@@ -17,7 +17,7 @@
 
 	var heads = [];
 	var bricks = [];
-	var icons = [];
+	var dislodgeables = [];
 	var frameInner = null; // hollow area walled off by the brick frame - kept clear of head spawns
 	var lastTime = null;
 	var audioCtx = null;
@@ -210,23 +210,25 @@
 		playBrickBreak();
 	}
 
-	// --- Social icons: knocked loose when a head collides with them, then
-	// fly around and bounce like a head until shot, at which point they fly
-	// straight back to their original spot and go back to being a normal
-	// link. -----------------------------------------------------------------
+	// --- Dislodgeables: any piece of real content marked .dislodgeable (the
+	// social icons, the profile photo, the name, each line of the title) is
+	// knocked loose when a head collides with it, then flies around and
+	// bounces like a head until shot, at which point it flies straight back
+	// to its original spot and goes back to being normal, in-place content.
+	// -------------------------------------------------------------------
 
-	function findIconByElement(el) {
-		for (var i = 0; i < icons.length; i++) {
-			if (icons[i].el === el) return icons[i];
+	function findDislodgeableByElement(el) {
+		for (var i = 0; i < dislodgeables.length; i++) {
+			if (dislodgeables[i].el === el) return dislodgeables[i];
 		}
 		return null;
 	}
 
-	function buildIcons() {
-		var els = document.querySelectorAll('.icon-button');
+	function buildDislodgeables() {
+		var els = document.querySelectorAll('.dislodgeable');
 		for (var i = 0; i < els.length; i++) {
 			var el = els[i];
-			var existing = findIconByElement(el);
+			var existing = findDislodgeableByElement(el);
 			if (existing) {
 				if (existing.state === 'resting') {
 					var rect = el.getBoundingClientRect();
@@ -234,15 +236,17 @@
 					existing.homeY = rect.top;
 					existing.x = rect.left;
 					existing.y = rect.top;
-					existing.size = rect.width;
+					existing.width = rect.width;
+					existing.height = rect.height;
 				}
 				continue;
 			}
 
 			var r = el.getBoundingClientRect();
-			icons.push({
+			dislodgeables.push({
 				el: el,
-				size: r.width,
+				width: r.width,
+				height: r.height,
 				homeX: r.left,
 				homeY: r.top,
 				x: r.left,
@@ -251,116 +255,148 @@
 				vy: 0,
 				rotation: 0,
 				rotationSpeed: 0,
-				state: 'resting'
+				state: 'resting',
+				placeholder: null
 			});
 		}
 	}
 
-	function dislodgeIcon(icon, dirVx, dirVy) {
-		icon.state = 'dislodged';
-		icon.rotation = 0;
-		icon.rotationSpeed = ROTATION_SPEED * (Math.random() < 0.5 ? -1 : 1);
+	function resolveBrickCollisionRect(obj) {
+		for (var i = 0; i < bricks.length; i++) {
+			var b = bricks[i];
 
-		var speed = Math.sqrt(dirVx * dirVx + dirVy * dirVy) || BASE_SPEED;
-		var knockSpeed = speed * 1.1 + 40;
-		icon.vx = (dirVx / speed) * knockSpeed;
-		icon.vy = (dirVy / speed) * knockSpeed;
-
-		// Going position:fixed pulls the icon out of the inline-block row,
-		// which would otherwise let its siblings collapse into the gap and
-		// end up visually underneath it. A same-sized placeholder holds the
-		// spot open until the icon comes home.
-		var placeholder = document.createElement('span');
-		placeholder.className = 'icon-placeholder';
-		placeholder.style.display = 'inline-block';
-		placeholder.style.width = icon.size + 'px';
-		placeholder.style.height = icon.size + 'px';
-		icon.el.parentNode.insertBefore(placeholder, icon.el);
-		icon.placeholder = placeholder;
-
-		icon.el.classList.add('icon-dislodged');
-		icon.el.style.position = 'fixed';
-		icon.el.style.left = '0';
-		icon.el.style.top = '0';
-		icon.el.style.zIndex = '6';
-		icon.el.style.transform = 'translate(' + icon.x + 'px, ' + icon.y + 'px) rotate(0deg)';
-	}
-
-	function returnIconHome(icon) {
-		if (icon.state !== 'dislodged') return;
-		icon.state = 'returning';
-	}
-
-	function settleIcon(icon) {
-		icon.x = icon.homeX;
-		icon.y = icon.homeY;
-		icon.state = 'resting';
-		icon.el.classList.remove('icon-dislodged');
-		icon.el.style.position = '';
-		icon.el.style.left = '';
-		icon.el.style.top = '';
-		icon.el.style.zIndex = '';
-		icon.el.style.transform = '';
-		if (icon.placeholder && icon.placeholder.parentNode) {
-			icon.placeholder.parentNode.removeChild(icon.placeholder);
-		}
-		icon.placeholder = null;
-	}
-
-	function checkIconDislodge(head) {
-		for (var i = 0; i < icons.length; i++) {
-			var icon = icons[i];
-			if (icon.state !== 'resting') continue;
-
-			var overlapX = Math.min(head.x + head.size, icon.homeX + icon.size) - Math.max(head.x, icon.homeX);
-			var overlapY = Math.min(head.y + head.size, icon.homeY + icon.size) - Math.max(head.y, icon.homeY);
+			var overlapX = Math.min(obj.x + obj.width, b.x + b.w) - Math.max(obj.x, b.x);
+			var overlapY = Math.min(obj.y + obj.height, b.y + b.h) - Math.max(obj.y, b.y);
 
 			if (overlapX > 0 && overlapY > 0) {
-				var incomingVx = head.vx, incomingVy = head.vy; // knock the icon using the head's approach direction, before its own bounce flips it
-
 				if (overlapX < overlapY) {
-					if (head.x < icon.homeX) { head.x -= overlapX; head.vx = -Math.abs(head.vx); }
-					else { head.x += overlapX; head.vx = Math.abs(head.vx); }
+					if (obj.x < b.x) { obj.x -= overlapX; obj.vx = -Math.abs(obj.vx); }
+					else { obj.x += overlapX; obj.vx = Math.abs(obj.vx); }
 				} else {
-					if (head.y < icon.homeY) { head.y -= overlapY; head.vy = -Math.abs(head.vy); }
-					else { head.y += overlapY; head.vy = Math.abs(head.vy); }
+					if (obj.y < b.y) { obj.y -= overlapY; obj.vy = -Math.abs(obj.vy); }
+					else { obj.y += overlapY; obj.vy = Math.abs(obj.vy); }
 				}
-				dislodgeIcon(icon, incomingVx, incomingVy);
 			}
 		}
 	}
 
-	function updateIcons(delta, screenW, screenH) {
-		for (var i = 0; i < icons.length; i++) {
-			var icon = icons[i];
-			if (icon.state === 'resting') continue;
+	function dislodge(obj, dirVx, dirVy) {
+		obj.state = 'dislodged';
+		obj.rotation = 0;
+		obj.rotationSpeed = ROTATION_SPEED * (Math.random() < 0.5 ? -1 : 1);
 
-			if (icon.state === 'dislodged') {
-				icon.x += icon.vx * delta;
-				icon.y += icon.vy * delta;
-				icon.rotation += icon.rotationSpeed * delta;
+		var speed = Math.sqrt(dirVx * dirVx + dirVy * dirVy) || BASE_SPEED;
+		var knockSpeed = speed * 1.1 + 40;
+		obj.vx = (dirVx / speed) * knockSpeed;
+		obj.vy = (dirVy / speed) * knockSpeed;
 
-				resolveBrickCollision(icon);
+		// Going position:fixed pulls the element out of the document flow,
+		// which would otherwise let its siblings collapse into the gap and
+		// end up visually underneath it. A same-sized, same-margin placeholder
+		// holds the spot open until it comes home.
+		var cs = getComputedStyle(obj.el);
+		var placeholder = document.createElement('span');
+		placeholder.className = 'dislodge-placeholder';
+		// Icon-buttons sit side-by-side in a row (display:inline-block); every
+		// other dislodgeable already effectively owns its whole line, so a
+		// plain block placeholder avoids inline-vs-empty-inline-block
+		// line-height/baseline quirks (this bit an <img>, which is naturally
+		// `display:inline` but was the sole content of its line).
+		placeholder.style.display = cs.display === 'inline-block' ? 'inline-block' : 'block';
+		placeholder.style.width = obj.width + 'px';
+		placeholder.style.height = obj.height + 'px';
+		placeholder.style.marginTop = cs.marginTop;
+		placeholder.style.marginRight = cs.marginRight;
+		placeholder.style.marginBottom = cs.marginBottom;
+		placeholder.style.marginLeft = cs.marginLeft;
+		obj.el.parentNode.insertBefore(placeholder, obj.el);
+		obj.placeholder = placeholder;
 
-				if (icon.x + icon.size < 0) icon.x = screenW;
-				else if (icon.x > screenW) icon.x = -icon.size;
-				if (icon.y + icon.size < 0) icon.y = screenH;
-				else if (icon.y > screenH) icon.y = -icon.size;
+		obj.el.classList.add('dislodged');
+		obj.el.style.position = 'fixed';
+		obj.el.style.left = '0';
+		obj.el.style.top = '0';
+		obj.el.style.margin = '0';
+		obj.el.style.zIndex = '6';
+		obj.el.style.transform = 'translate(' + obj.x + 'px, ' + obj.y + 'px) rotate(0deg)';
+	}
 
-				icon.el.style.transform = 'translate(' + icon.x + 'px, ' + icon.y + 'px) rotate(' + icon.rotation + 'deg)';
-			} else if (icon.state === 'returning') {
-				var dx = icon.homeX - icon.x;
-				var dy = icon.homeY - icon.y;
+	function returnHome(obj) {
+		if (obj.state !== 'dislodged') return;
+		obj.state = 'returning';
+	}
+
+	function settle(obj) {
+		obj.x = obj.homeX;
+		obj.y = obj.homeY;
+		obj.state = 'resting';
+		obj.el.classList.remove('dislodged');
+		obj.el.style.position = '';
+		obj.el.style.left = '';
+		obj.el.style.top = '';
+		obj.el.style.margin = '';
+		obj.el.style.zIndex = '';
+		obj.el.style.transform = '';
+		if (obj.placeholder && obj.placeholder.parentNode) {
+			obj.placeholder.parentNode.removeChild(obj.placeholder);
+		}
+		obj.placeholder = null;
+	}
+
+	function checkDislodgeCollisions(head) {
+		for (var i = 0; i < dislodgeables.length; i++) {
+			var obj = dislodgeables[i];
+			if (obj.state !== 'resting') continue;
+
+			var overlapX = Math.min(head.x + head.size, obj.homeX + obj.width) - Math.max(head.x, obj.homeX);
+			var overlapY = Math.min(head.y + head.size, obj.homeY + obj.height) - Math.max(head.y, obj.homeY);
+
+			if (overlapX > 0 && overlapY > 0) {
+				var incomingVx = head.vx, incomingVy = head.vy; // knock using the head's approach direction, before its own bounce flips it
+
+				if (overlapX < overlapY) {
+					if (head.x < obj.homeX) { head.x -= overlapX; head.vx = -Math.abs(head.vx); }
+					else { head.x += overlapX; head.vx = Math.abs(head.vx); }
+				} else {
+					if (head.y < obj.homeY) { head.y -= overlapY; head.vy = -Math.abs(head.vy); }
+					else { head.y += overlapY; head.vy = Math.abs(head.vy); }
+				}
+				dislodge(obj, incomingVx, incomingVy);
+			}
+		}
+	}
+
+	function updateDislodgeables(delta, screenW, screenH) {
+		for (var i = 0; i < dislodgeables.length; i++) {
+			var obj = dislodgeables[i];
+			if (obj.state === 'resting') continue;
+
+			if (obj.state === 'dislodged') {
+				obj.x += obj.vx * delta;
+				obj.y += obj.vy * delta;
+				obj.rotation += obj.rotationSpeed * delta;
+
+				resolveBrickCollisionRect(obj);
+
+				if (obj.x + obj.width < 0) obj.x = screenW;
+				else if (obj.x > screenW) obj.x = -obj.width;
+				if (obj.y + obj.height < 0) obj.y = screenH;
+				else if (obj.y > screenH) obj.y = -obj.height;
+
+				obj.el.style.transform = 'translate(' + obj.x + 'px, ' + obj.y + 'px) rotate(' + obj.rotation + 'deg)';
+			} else if (obj.state === 'returning') {
+				var dx = obj.homeX - obj.x;
+				var dy = obj.homeY - obj.y;
 				var dist = Math.sqrt(dx * dx + dy * dy);
 				var step = RETURN_SPEED * delta;
 
 				if (dist <= step) {
-					settleIcon(icon);
+					settle(obj);
 				} else {
-					icon.x += (dx / dist) * step;
-					icon.y += (dy / dist) * step;
-					icon.rotation += icon.rotationSpeed * delta * 0.3;
-					icon.el.style.transform = 'translate(' + icon.x + 'px, ' + icon.y + 'px) rotate(' + icon.rotation + 'deg)';
+					obj.x += (dx / dist) * step;
+					obj.y += (dy / dist) * step;
+					obj.rotation += obj.rotationSpeed * delta * 0.3;
+					obj.el.style.transform = 'translate(' + obj.x + 'px, ' + obj.y + 'px) rotate(' + obj.rotation + 'deg)';
 				}
 			}
 		}
@@ -494,7 +530,7 @@
 			head.rotation += head.rotationSpeed * delta;
 
 			resolveBrickCollision(head);
-			checkIconDislodge(head);
+			checkDislodgeCollisions(head);
 
 			// Wrap around screen edges, Asteroids-style, instead of bouncing.
 			if (head.x + head.size < 0) head.x = screenW;
@@ -506,7 +542,7 @@
 			head.el.style.transform = 'translate(' + head.x + 'px, ' + head.y + 'px) rotate(' + head.rotation + 'deg)';
 		}
 
-		updateIcons(delta, screenW, screenH);
+		updateDislodgeables(delta, screenW, screenH);
 		checkMerges();
 
 		requestAnimationFrame(frame);
@@ -548,18 +584,19 @@
 			}
 		}
 
-		for (var j = 0; j < icons.length; j++) {
-			var icon = icons[j];
-			if (icon.state !== 'dislodged') continue;
+		for (var j = 0; j < dislodgeables.length; j++) {
+			var obj = dislodgeables[j];
+			if (obj.state !== 'dislodged') continue;
 
-			var icx = icon.x + icon.size / 2;
-			var icy = icon.y + icon.size / 2;
-			var idx = x - icx, idy = y - icy;
-			var idist = Math.sqrt(idx * idx + idy * idy);
+			var ocx = obj.x + obj.width / 2;
+			var ocy = obj.y + obj.height / 2;
+			var odx = x - ocx, ody = y - ocy;
+			var odist = Math.sqrt(odx * odx + ody * ody);
+			var radius = (obj.width + obj.height) / 4;
 
-			if (idist < icon.size / 2 + HIT_TOLERANCE) {
+			if (odist < radius + HIT_TOLERANCE) {
 				hitAny = true;
-				returnIconHome(icon);
+				returnHome(obj);
 			}
 		}
 
@@ -572,13 +609,13 @@
 		var brickEl = e.target.closest && e.target.closest('.brick');
 		if (brickEl) return; // the brick's own listener (with stopPropagation) already handled it
 
-		// A dislodged/returning icon is still a real <a href> in the DOM, so a
-		// click on it would otherwise navigate away - block that and let the
-		// hit-circle check below send it home instead. A resting icon (or any
-		// other real content) is untouched and behaves like a normal link.
-		var iconEl = e.target.closest && e.target.closest('.icon-button');
-		var icon = iconEl ? findIconByElement(iconEl) : null;
-		if (icon && icon.state !== 'resting') {
+		// A dislodged/returning piece of content (which may itself be, or
+		// contain, a real <a href>) would otherwise navigate away on click -
+		// block that and let the hit-circle check below send it home instead.
+		// Resting content (or any other real content) is untouched.
+		var dislodgeableEl = e.target.closest && e.target.closest('.dislodgeable');
+		var obj = dislodgeableEl ? findDislodgeableByElement(dislodgeableEl) : null;
+		if (obj && obj.state !== 'resting') {
 			e.preventDefault();
 		} else if (e.target.closest && e.target.closest('.container')) {
 			// Legitimate, visible page content (headings, the photo, links) opts
@@ -595,10 +632,10 @@
 	if (!initial) return;
 
 	buildBricks();
-	buildIcons();
+	buildDislodgeables();
 	window.addEventListener('resize', function () {
 		buildBricks();
-		buildIcons();
+		buildDislodgeables();
 	});
 
 	var start = randomVelocity(BASE_SPEED);
