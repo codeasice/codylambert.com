@@ -135,7 +135,7 @@
 		el.style.backgroundColor = color;
 		document.body.appendChild(el);
 
-		var brick = { el: el, x: x, y: y, w: w, h: h, color: color };
+		var brick = { el: el, x: x, y: y, w: w, h: h, color: color, hp: 1 };
 		el.addEventListener('click', function (e) {
 			e.stopPropagation();
 			explodeBrick(brick);
@@ -199,6 +199,15 @@
 		return { x: x, y: y };
 	}
 
+	// Heads chip away at whatever brick they hit: a full-size head deals a
+	// full hit (destroys an undamaged brick outright), a half-size head
+	// deals half a hit, a quarter-size head a quarter, and so on - damage is
+	// just head.size / INITIAL_SIZE. The actual damage + split happens in
+	// processBrickHits() after the frame's per-head loop finishes, so
+	// mutating `heads` mid-iteration (removing the struck head, spawning its
+	// two halves) can't disturb the loop that's still walking it.
+	var pendingBrickHits = [];
+
 	function resolveBrickCollision(head) {
 		for (var i = 0; i < bricks.length; i++) {
 			var b = bricks[i];
@@ -214,8 +223,31 @@
 					if (head.y < b.y) { head.y -= overlapY; head.vy = -Math.abs(head.vy); }
 					else { head.y += overlapY; head.vy = Math.abs(head.vy); }
 				}
+
+				pendingBrickHits.push({ head: head, brick: b });
+				return; // this head has struck a brick this frame; stop here
 			}
 		}
+	}
+
+	function processBrickHits() {
+		for (var i = 0; i < pendingBrickHits.length; i++) {
+			var hit = pendingBrickHits[i];
+			var brick = hit.brick;
+			var head = hit.head;
+
+			if (bricks.indexOf(brick) === -1) continue; // already destroyed this frame
+
+			brick.hp -= head.size / INITIAL_SIZE;
+			if (brick.hp <= 0) {
+				explodeBrick(brick);
+			} else {
+				brick.el.style.opacity = Math.max(0.3, brick.hp);
+			}
+
+			splitHead(head, head.x + head.size / 2, head.y + head.size / 2);
+		}
+		pendingBrickHits.length = 0;
 	}
 
 	function playBrickBreak() {
@@ -614,6 +646,8 @@
 			if (head.y + head.size < 0) head.y = screenH;
 			else if (head.y > screenH) head.y = -head.size;
 		}
+
+		processBrickHits(); // apply damage + split any heads that struck a brick this frame
 
 		moveDislodgeables(delta, screenW, screenH);
 
