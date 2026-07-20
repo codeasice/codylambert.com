@@ -2,7 +2,7 @@
 	var IMG_SRC = 'floating-head.png';
 	var INITIAL_SIZE = 100;
 	var MAX_SIZE = INITIAL_SIZE; // merging never grows heads past the original size
-	var MIN_SIZE = 20; // heads smaller than this no longer split
+	var MIN_SIZE = 6; // heads smaller than this no longer split
 	var BASE_SPEED = 80; // px per second
 	var ROTATION_SPEED = 60; // deg per second
 	var MERGE_COOLDOWN = 0.6; // seconds before a freshly spawned head can merge (avoids re-merging siblings instantly)
