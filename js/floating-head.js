@@ -13,8 +13,11 @@
 	var FRAME_PADDING = 36; // gap between the content and the inner edge of the brick frame
 	var BRICK_COLORS = { top: '#e63946', right: '#f4a300', bottom: '#ffd60a', left: '#06d6a0' };
 
+	var RETURN_SPEED = 350; // px per second a dislodged icon flies home when shot
+
 	var heads = [];
 	var bricks = [];
+	var icons = [];
 	var frameInner = null; // hollow area walled off by the brick frame - kept clear of head spawns
 	var lastTime = null;
 	var audioCtx = null;
@@ -207,6 +210,162 @@
 		playBrickBreak();
 	}
 
+	// --- Social icons: knocked loose when a head collides with them, then
+	// fly around and bounce like a head until shot, at which point they fly
+	// straight back to their original spot and go back to being a normal
+	// link. -----------------------------------------------------------------
+
+	function findIconByElement(el) {
+		for (var i = 0; i < icons.length; i++) {
+			if (icons[i].el === el) return icons[i];
+		}
+		return null;
+	}
+
+	function buildIcons() {
+		var els = document.querySelectorAll('.icon-button');
+		for (var i = 0; i < els.length; i++) {
+			var el = els[i];
+			var existing = findIconByElement(el);
+			if (existing) {
+				if (existing.state === 'resting') {
+					var rect = el.getBoundingClientRect();
+					existing.homeX = rect.left;
+					existing.homeY = rect.top;
+					existing.x = rect.left;
+					existing.y = rect.top;
+					existing.size = rect.width;
+				}
+				continue;
+			}
+
+			var r = el.getBoundingClientRect();
+			icons.push({
+				el: el,
+				size: r.width,
+				homeX: r.left,
+				homeY: r.top,
+				x: r.left,
+				y: r.top,
+				vx: 0,
+				vy: 0,
+				rotation: 0,
+				rotationSpeed: 0,
+				state: 'resting'
+			});
+		}
+	}
+
+	function dislodgeIcon(icon, dirVx, dirVy) {
+		icon.state = 'dislodged';
+		icon.rotation = 0;
+		icon.rotationSpeed = ROTATION_SPEED * (Math.random() < 0.5 ? -1 : 1);
+
+		var speed = Math.sqrt(dirVx * dirVx + dirVy * dirVy) || BASE_SPEED;
+		var knockSpeed = speed * 1.1 + 40;
+		icon.vx = (dirVx / speed) * knockSpeed;
+		icon.vy = (dirVy / speed) * knockSpeed;
+
+		// Going position:fixed pulls the icon out of the inline-block row,
+		// which would otherwise let its siblings collapse into the gap and
+		// end up visually underneath it. A same-sized placeholder holds the
+		// spot open until the icon comes home.
+		var placeholder = document.createElement('span');
+		placeholder.className = 'icon-placeholder';
+		placeholder.style.display = 'inline-block';
+		placeholder.style.width = icon.size + 'px';
+		placeholder.style.height = icon.size + 'px';
+		icon.el.parentNode.insertBefore(placeholder, icon.el);
+		icon.placeholder = placeholder;
+
+		icon.el.classList.add('icon-dislodged');
+		icon.el.style.position = 'fixed';
+		icon.el.style.left = '0';
+		icon.el.style.top = '0';
+		icon.el.style.zIndex = '6';
+		icon.el.style.transform = 'translate(' + icon.x + 'px, ' + icon.y + 'px) rotate(0deg)';
+	}
+
+	function returnIconHome(icon) {
+		if (icon.state !== 'dislodged') return;
+		icon.state = 'returning';
+	}
+
+	function settleIcon(icon) {
+		icon.x = icon.homeX;
+		icon.y = icon.homeY;
+		icon.state = 'resting';
+		icon.el.classList.remove('icon-dislodged');
+		icon.el.style.position = '';
+		icon.el.style.left = '';
+		icon.el.style.top = '';
+		icon.el.style.zIndex = '';
+		icon.el.style.transform = '';
+		if (icon.placeholder && icon.placeholder.parentNode) {
+			icon.placeholder.parentNode.removeChild(icon.placeholder);
+		}
+		icon.placeholder = null;
+	}
+
+	function checkIconDislodge(head) {
+		for (var i = 0; i < icons.length; i++) {
+			var icon = icons[i];
+			if (icon.state !== 'resting') continue;
+
+			var overlapX = Math.min(head.x + head.size, icon.homeX + icon.size) - Math.max(head.x, icon.homeX);
+			var overlapY = Math.min(head.y + head.size, icon.homeY + icon.size) - Math.max(head.y, icon.homeY);
+
+			if (overlapX > 0 && overlapY > 0) {
+				var incomingVx = head.vx, incomingVy = head.vy; // knock the icon using the head's approach direction, before its own bounce flips it
+
+				if (overlapX < overlapY) {
+					if (head.x < icon.homeX) { head.x -= overlapX; head.vx = -Math.abs(head.vx); }
+					else { head.x += overlapX; head.vx = Math.abs(head.vx); }
+				} else {
+					if (head.y < icon.homeY) { head.y -= overlapY; head.vy = -Math.abs(head.vy); }
+					else { head.y += overlapY; head.vy = Math.abs(head.vy); }
+				}
+				dislodgeIcon(icon, incomingVx, incomingVy);
+			}
+		}
+	}
+
+	function updateIcons(delta, screenW, screenH) {
+		for (var i = 0; i < icons.length; i++) {
+			var icon = icons[i];
+			if (icon.state === 'resting') continue;
+
+			if (icon.state === 'dislodged') {
+				icon.x += icon.vx * delta;
+				icon.y += icon.vy * delta;
+				icon.rotation += icon.rotationSpeed * delta;
+
+				resolveBrickCollision(icon);
+
+				if (icon.x + icon.size < 0) icon.x = screenW;
+				else if (icon.x > screenW) icon.x = -icon.size;
+				if (icon.y + icon.size < 0) icon.y = screenH;
+				else if (icon.y > screenH) icon.y = -icon.size;
+
+				icon.el.style.transform = 'translate(' + icon.x + 'px, ' + icon.y + 'px) rotate(' + icon.rotation + 'deg)';
+			} else if (icon.state === 'returning') {
+				var dx = icon.homeX - icon.x;
+				var dy = icon.homeY - icon.y;
+				var dist = Math.sqrt(dx * dx + dy * dy);
+				var step = RETURN_SPEED * delta;
+
+				if (dist <= step) {
+					settleIcon(icon);
+				} else {
+					icon.x += (dx / dist) * step;
+					icon.y += (dy / dist) * step;
+					icon.rotation += icon.rotationSpeed * delta * 0.3;
+					icon.el.style.transform = 'translate(' + icon.x + 'px, ' + icon.y + 'px) rotate(' + icon.rotation + 'deg)';
+				}
+			}
+		}
+	}
+
 	// --- Heads ---------------------------------------------------------
 
 	function attachHead(el, size, x, y, vx, vy) {
@@ -335,6 +494,7 @@
 			head.rotation += head.rotationSpeed * delta;
 
 			resolveBrickCollision(head);
+			checkIconDislodge(head);
 
 			// Wrap around screen edges, Asteroids-style, instead of bouncing.
 			if (head.x + head.size < 0) head.x = screenW;
@@ -346,6 +506,7 @@
 			head.el.style.transform = 'translate(' + head.x + 'px, ' + head.y + 'px) rotate(' + head.rotation + 'deg)';
 		}
 
+		updateIcons(delta, screenW, screenH);
 		checkMerges();
 
 		requestAnimationFrame(frame);
@@ -387,6 +548,21 @@
 			}
 		}
 
+		for (var j = 0; j < icons.length; j++) {
+			var icon = icons[j];
+			if (icon.state !== 'dislodged') continue;
+
+			var icx = icon.x + icon.size / 2;
+			var icy = icon.y + icon.size / 2;
+			var idx = x - icx, idy = y - icy;
+			var idist = Math.sqrt(idx * idx + idy * idy);
+
+			if (idist < icon.size / 2 + HIT_TOLERANCE) {
+				hitAny = true;
+				returnIconHome(icon);
+			}
+		}
+
 		showMuzzleFlash(x, y, hitAny);
 		playGunshot();
 	}
@@ -396,11 +572,22 @@
 		var brickEl = e.target.closest && e.target.closest('.brick');
 		if (brickEl) return; // the brick's own listener (with stopPropagation) already handled it
 
-		// Legitimate, visible page content (headings, the photo, links) opts
-		// back into pointer-events inside .container; anything else - the
-		// black background, or a head itself, which is pointer-events:none -
-		// bubbles up as a click on body/html and counts as a shot.
-		if (e.target.closest && e.target.closest('.container')) return;
+		// A dislodged/returning icon is still a real <a href> in the DOM, so a
+		// click on it would otherwise navigate away - block that and let the
+		// hit-circle check below send it home instead. A resting icon (or any
+		// other real content) is untouched and behaves like a normal link.
+		var iconEl = e.target.closest && e.target.closest('.icon-button');
+		var icon = iconEl ? findIconByElement(iconEl) : null;
+		if (icon && icon.state !== 'resting') {
+			e.preventDefault();
+		} else if (e.target.closest && e.target.closest('.container')) {
+			// Legitimate, visible page content (headings, the photo, links) opts
+			// back into pointer-events inside .container; anything else - the
+			// black background, or a head itself, which is pointer-events:none -
+			// bubbles up as a click on body/html and counts as a shot.
+			return;
+		}
+
 		fireShot(e.clientX, e.clientY);
 	});
 
@@ -408,7 +595,11 @@
 	if (!initial) return;
 
 	buildBricks();
-	window.addEventListener('resize', buildBricks);
+	buildIcons();
+	window.addEventListener('resize', function () {
+		buildBricks();
+		buildIcons();
+	});
 
 	var start = randomVelocity(BASE_SPEED);
 	var spawn = randomSpawnOutsideFrame(INITIAL_SIZE);
