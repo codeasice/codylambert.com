@@ -6,6 +6,7 @@
 	var BASE_SPEED = 80; // px per second
 	var ROTATION_SPEED = 60; // deg per second
 	var MERGE_COOLDOWN = 0.6; // seconds before a freshly spawned head can merge (avoids re-merging siblings instantly)
+	var HIT_TOLERANCE = 20; // extra px of forgiveness beyond a head's own radius when aiming
 
 	var heads = [];
 	var lastTime = null;
@@ -33,10 +34,6 @@
 			rotationSpeed: ROTATION_SPEED * (Math.random() < 0.5 ? -1 : 1),
 			age: 0
 		};
-
-		el.addEventListener('click', function (e) {
-			splitHead(head, e.clientX, e.clientY);
-		});
 
 		heads.push(head);
 		return head;
@@ -163,6 +160,86 @@
 
 		requestAnimationFrame(frame);
 	}
+
+	// --- Shooting: a click anywhere that isn't on real page content fires a
+	// shot. Hit detection uses a generous circle around each head instead of
+	// requiring a pixel-exact click, and a Duck Hunt-style flash + gunshot
+	// sound play regardless of whether anything was actually hit.
+
+	function playGunshot() {
+		try {
+			var Ctx = window.AudioContext || window.webkitAudioContext;
+			if (!Ctx) return;
+			var ctx = new Ctx();
+			var duration = 0.15;
+			var bufferSize = Math.floor(ctx.sampleRate * duration);
+			var buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+			var data = buffer.getChannelData(0);
+			for (var i = 0; i < bufferSize; i++) {
+				data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 3);
+			}
+
+			var noise = ctx.createBufferSource();
+			noise.buffer = buffer;
+
+			var filter = ctx.createBiquadFilter();
+			filter.type = 'lowpass';
+			filter.frequency.value = 1500;
+
+			var gain = ctx.createGain();
+			gain.gain.setValueAtTime(0.35, ctx.currentTime);
+			gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+
+			noise.connect(filter);
+			filter.connect(gain);
+			gain.connect(ctx.destination);
+			noise.start();
+			noise.stop(ctx.currentTime + duration);
+			noise.onended = function () { ctx.close(); };
+		} catch (e) {
+			// Audio unavailable/blocked - the visual flash still plays.
+		}
+	}
+
+	function showMuzzleFlash(x, y, hit) {
+		var ring = document.createElement('div');
+		ring.className = 'shot-flash' + (hit ? ' shot-flash-hit' : '');
+		ring.style.left = x + 'px';
+		ring.style.top = y + 'px';
+		document.body.appendChild(ring);
+		ring.addEventListener('animationend', function () {
+			if (ring.parentNode) ring.parentNode.removeChild(ring);
+		});
+	}
+
+	function fireShot(x, y) {
+		var hitAny = false;
+
+		for (var i = heads.length - 1; i >= 0; i--) {
+			var head = heads[i];
+			var cx = head.x + head.size / 2;
+			var cy = head.y + head.size / 2;
+			var dx = x - cx, dy = y - cy;
+			var dist = Math.sqrt(dx * dx + dy * dy);
+
+			if (dist < head.size / 2 + HIT_TOLERANCE) {
+				hitAny = true;
+				splitHead(head, x, y);
+			}
+		}
+
+		showMuzzleFlash(x, y, hitAny);
+		playGunshot();
+	}
+
+	document.addEventListener('click', function (e) {
+		// Legitimate, visible page content (headings, the photo, links) opts
+		// back into pointer-events inside .container; anything else - the
+		// black background, or a head itself, which is pointer-events:none -
+		// bubbles up as a click on body/html and counts as a shot.
+		if (e.target.closest && e.target.closest('.container')) return;
+		fireShot(e.clientX, e.clientY);
+	});
 
 	var initial = document.querySelector('img.floating-head');
 	if (!initial) return;
