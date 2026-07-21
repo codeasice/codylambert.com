@@ -6,11 +6,14 @@
 	var BASE_SPEED = 80; // px per second
 	var ROTATION_SPEED = 60; // deg per second
 	var MERGE_COOLDOWN = 0.6; // seconds before a freshly spawned head can merge (avoids re-merging siblings instantly)
-	var HIT_TOLERANCE = 20; // extra px of forgiveness beyond a head's own radius when aiming
+	var IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0; // fingers are far less precise than a mouse pointer
+	var HIT_TOLERANCE = IS_TOUCH ? 36 : 20; // extra px of forgiveness beyond a head's own radius when aiming
 
 	var BRICK_UNIT = 40; // brick length along the wall it's part of
 	var BRICK_THICKNESS = 16; // brick thickness (the wall's depth)
-	var FRAME_PADDING = 36; // gap between the content and the inner edge of the brick frame
+	var FRAME_PADDING = 36; // gap between the content and the inner edge of the brick frame, on screens with room to spare
+	var FRAME_PADDING_NARROW = 12; // used instead once the viewport is too narrow to afford the full padding
+	var NARROW_BREAKPOINT = 600; // px
 	var BRICK_COLORS = { top: '#e63946', right: '#f4a300', bottom: '#ffd60a', left: '#06d6a0' };
 
 	var RETURN_SPEED = 350; // px per second a dislodged icon flies home when shot
@@ -157,10 +160,17 @@
 		clearBricks();
 
 		var r = content.getBoundingClientRect();
-		var left = r.left - FRAME_PADDING;
-		var top = r.top - FRAME_PADDING;
-		var right = r.right + FRAME_PADDING;
-		var bottom = r.bottom + FRAME_PADDING;
+		var screenW = window.innerWidth;
+		var screenH = window.innerHeight;
+		// On a narrow phone the content already sits close to the screen
+		// edges, so the usual padding would push the frame off-screen -
+		// use a slimmer one instead, and clamp to the viewport either way
+		// so the frame can never force horizontal/vertical scrolling.
+		var padding = screenW < NARROW_BREAKPOINT ? FRAME_PADDING_NARROW : FRAME_PADDING;
+		var left = Math.max(0, r.left - padding);
+		var top = Math.max(0, r.top - padding);
+		var right = Math.min(screenW, r.right + padding);
+		var bottom = Math.min(screenH, r.bottom + padding);
 
 		layoutRun(left, right, BRICK_UNIT).forEach(function (seg) {
 			makeBrick(seg.pos, top, seg.size, BRICK_THICKNESS, BRICK_COLORS.top);
